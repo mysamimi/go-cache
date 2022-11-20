@@ -1,3 +1,5 @@
+I forked this project from github.com/patrickmn/go-cache and modified this
+I want to be able to increment/decriment and if not found set it in my case
 # go-cache
 
 go-cache is an in-memory key:value store/cache similar to memcached that is
@@ -15,14 +17,14 @@ one) to recover from downtime quickly. (See the docs for `NewFrom()` for caveats
 
 ### Installation
 
-`go get github.com/patrickmn/go-cache`
+`go get github.com/mysamimi/go-cache`
 
 ### Usage
 
 ```go
 import (
 	"fmt"
-	"github.com/patrickmn/go-cache"
+	"github.com/mysamimi/go-cache"
 	"time"
 )
 
