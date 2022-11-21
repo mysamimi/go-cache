@@ -192,7 +192,12 @@ func (c *cache) Increment(k string, n int64) error {
 		c.set(k, n, DefaultExpiration)
 		return nil
 	} else if v.Expired() {
-		return fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return nil
 	}
 	switch v.Object.(type) {
 	case int:
@@ -266,7 +271,12 @@ func (c *cache) IncrementInt(k string, n int) (int, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(int)
 	if !ok {
@@ -289,7 +299,12 @@ func (c *cache) IncrementInt8(k string, n int8) (int8, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(int8)
 	if !ok {
@@ -312,7 +327,12 @@ func (c *cache) IncrementInt16(k string, n int16) (int16, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(int16)
 	if !ok {
@@ -335,7 +355,12 @@ func (c *cache) IncrementInt32(k string, n int32) (int32, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(int32)
 	if !ok {
@@ -358,7 +383,12 @@ func (c *cache) IncrementInt64(k string, n int64) (int64, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(int64)
 	if !ok {
@@ -377,8 +407,16 @@ func (c *cache) IncrementUint(k string, n uint) (uint, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	v, found := c.items[k]
-	if !found || v.Expired() {
-		return 0, fmt.Errorf("Item %s not found", k)
+	if !found {
+		c.set(k, n, DefaultExpiration)
+		return n, nil
+	} else if v.Expired() {
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uint)
 	if !ok {
@@ -401,7 +439,12 @@ func (c *cache) IncrementUintptr(k string, n uintptr) (uintptr, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uintptr)
 	if !ok {
@@ -424,7 +467,12 @@ func (c *cache) IncrementUint8(k string, n uint8) (uint8, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uint8)
 	if !ok {
@@ -447,7 +495,12 @@ func (c *cache) IncrementUint16(k string, n uint16) (uint16, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uint16)
 	if !ok {
@@ -470,7 +523,12 @@ func (c *cache) IncrementUint32(k string, n uint32) (uint32, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uint32)
 	if !ok {
@@ -493,7 +551,12 @@ func (c *cache) IncrementUint64(k string, n uint64) (uint64, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uint64)
 	if !ok {
@@ -516,7 +579,12 @@ func (c *cache) IncrementFloat32(k string, n float32) (float32, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(float32)
 	if !ok {
@@ -539,7 +607,12 @@ func (c *cache) IncrementFloat64(k string, n float64) (float64, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(float64)
 	if !ok {
@@ -566,7 +639,12 @@ func (c *cache) Decrement(k string, n int64) error {
 		c.set(k, n, DefaultExpiration)
 		return nil
 	} else if v.Expired() {
-		return fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return nil
 	}
 	switch v.Object.(type) {
 	case int:
@@ -615,7 +693,12 @@ func (c *cache) DecrementFloat(k string, n float64) error {
 		c.set(k, n, DefaultExpiration)
 		return nil
 	} else if v.Expired() {
-		return fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return nil
 	}
 	switch v.Object.(type) {
 	case float32:
@@ -640,7 +723,12 @@ func (c *cache) DecrementInt(k string, n int) (int, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(int)
 	if !ok {
@@ -663,7 +751,12 @@ func (c *cache) DecrementInt8(k string, n int8) (int8, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(int8)
 	if !ok {
@@ -686,7 +779,12 @@ func (c *cache) DecrementInt16(k string, n int16) (int16, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(int16)
 	if !ok {
@@ -709,7 +807,12 @@ func (c *cache) DecrementInt32(k string, n int32) (int32, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(int32)
 	if !ok {
@@ -732,7 +835,12 @@ func (c *cache) DecrementInt64(k string, n int64) (int64, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(int64)
 	if !ok {
@@ -755,7 +863,12 @@ func (c *cache) DecrementUint(k string, n uint) (uint, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uint)
 	if !ok {
@@ -778,7 +891,12 @@ func (c *cache) DecrementUintptr(k string, n uintptr) (uintptr, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uintptr)
 	if !ok {
@@ -801,7 +919,12 @@ func (c *cache) DecrementUint8(k string, n uint8) (uint8, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uint8)
 	if !ok {
@@ -824,7 +947,12 @@ func (c *cache) DecrementUint16(k string, n uint16) (uint16, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uint16)
 	if !ok {
@@ -847,7 +975,12 @@ func (c *cache) DecrementUint32(k string, n uint32) (uint32, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uint32)
 	if !ok {
@@ -870,7 +1003,12 @@ func (c *cache) DecrementUint64(k string, n uint64) (uint64, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(uint64)
 	if !ok {
@@ -893,7 +1031,12 @@ func (c *cache) DecrementFloat32(k string, n float32) (float32, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(float32)
 	if !ok {
@@ -916,7 +1059,12 @@ func (c *cache) DecrementFloat64(k string, n float64) (float64, error) {
 		c.set(k, n, DefaultExpiration)
 		return n, nil
 	} else if v.Expired() {
-		return 0, fmt.Errorf("Item %s expired", k)
+		ov, evicted := c.delete(k)
+		if evicted {
+			c.onEvicted(k, ov)
+		}
+		c.set(k, n, DefaultExpiration)
+		return n, nil
 	}
 	rv, ok := v.Object.(float64)
 	if !ok {
