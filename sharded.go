@@ -78,7 +78,7 @@ func (sc *shardedCache) Replace(k string, x interface{}, d time.Duration) error 
 	return sc.bucket(k).Replace(k, x, d)
 }
 
-func (sc *shardedCache) Get(k string) (interface{}, bool) {
+func (sc *shardedCache) Get(k string) (interface{}, FoundItem) {
 	return sc.bucket(k).Get(k)
 }
 
@@ -130,10 +130,10 @@ type shardedJanitor struct {
 
 func (j *shardedJanitor) Run(sc *shardedCache) {
 	j.stop = make(chan bool)
-	tick := time.Tick(j.Interval)
+	tick := time.NewTicker(j.Interval)
 	for {
 		select {
-		case <-tick:
+		case <-tick.C:
 			sc.DeleteExpired()
 		case <-j.stop:
 			return

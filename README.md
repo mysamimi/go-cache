@@ -43,7 +43,7 @@ func main() {
 
 	// Get the string associated with the key "foo" from the cache
 	foo, found := c.Get("foo")
-	if found {
+	if found == cache.Found {
 		fmt.Println(foo)
 	}
 
@@ -53,19 +53,19 @@ func main() {
 	// values which will only be used once--e.g. for passing to another
 	// function--is:
 	foo, found := c.Get("foo")
-	if found {
+	if found == cache.Found {
 		MyFunction(foo.(string))
 	}
 
 	// This gets tedious if the value is used several times in the same function.
 	// You might do either of the following instead:
-	if x, found := c.Get("foo"); found {
+	if x, found := c.Get("foo"); found == cache.Found {
 		foo := x.(string)
 		// ...
 	}
 	// or
 	var foo string
-	if x, found := c.Get("foo"); found {
+	if x, found := c.Get("foo"); found == cache.Found {
 		foo = x.(string)
 	}
 	// ...
@@ -73,7 +73,7 @@ func main() {
 
 	// Want performance? Store pointers!
 	c.Set("foo", &MyStruct, cache.DefaultExpiration)
-	if x, found := c.Get("foo"); found {
+	if x, found := c.Get("foo"); found == cache.Found {
 		foo := x.(*MyStruct)
 			// ...
 	}
