@@ -31,7 +31,7 @@ import (
 func main() {
 	// Create a cache with a default expiration time of 5 minutes, and which
 	// purges expired items every 10 minutes
-	c := cache.New(5*time.Minute, 10*time.Minute)
+	c := cache.New[any](5*time.Minute, 10*time.Minute)
 
 	// Set the value of the key "foo" to "bar", with the default expiration time
 	c.Set("foo", "bar", cache.DefaultExpiration)
