@@ -17,14 +17,14 @@ one) to recover from downtime quickly. (See the docs for `NewFrom()` for caveats
 
 ### Installation
 
-`go get github.com/mysamimi/go-cache`
+`go get github.com/mysamimi/go-cache/v3`
 
 ### Usage
 
 ```go
 import (
 	"fmt"
-	"github.com/mysamimi/go-cache"
+	"github.com/mysamimi/go-cache/v3"
 	"time"
 )
 
