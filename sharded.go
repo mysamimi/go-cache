@@ -17,9 +17,14 @@ import (
 // See cache_test.go for a few benchmarks.
 const defaultShards = 16
 
+type unexportedShardedCache[V any] struct {
+	*ShardedCache[V]
+}
+
 type ShardedCache[V any] struct {
 	numBuckets int
 	cs         []*cache[V]
+	janitor    *shardedJanitor
 }
 
 func shardKey(key string, numBuckets int) int {
@@ -100,7 +105,37 @@ func (sc *ShardedCache[V]) Flush() {
 	}
 }
 
-func NewShardedCache[V any](numShards int, de time.Duration) *ShardedCache[V] {
+type shardedJanitor struct {
+	Interval time.Duration
+	stop     chan bool
+}
+
+func (j *shardedJanitor) Run(sc interface{ DeleteExpired() }) {
+	j.stop = make(chan bool)
+	tick := time.NewTicker(j.Interval)
+	for {
+		select {
+		case <-tick.C:
+			sc.DeleteExpired()
+		case <-j.stop:
+			return
+		}
+	}
+}
+
+func stopShardedJanitor[V any](sc *unexportedShardedCache[V]) {
+	sc.janitor.stop <- true
+}
+
+func runShardedJanitor[V any](sc *ShardedCache[V], ci time.Duration) {
+	j := &shardedJanitor{
+		Interval: ci,
+	}
+	sc.janitor = j
+	go j.Run(sc)
+}
+
+func NewShardedCache[V any](numShards int, defaultExpiration, cleanupInterval time.Duration) *ShardedCache[V] {
 	if numShards == 0 {
 		numShards = runtime.NumCPU() * 2
 		if numShards < defaultShards {
@@ -115,10 +150,50 @@ func NewShardedCache[V any](numShards int, de time.Duration) *ShardedCache[V] {
 	}
 	for i := 0; i < numShards; i++ {
 		c := &cache[V]{
-			defaultExpiration: de,
+			defaultExpiration: defaultExpiration,
 			items:             map[string]Item[V]{},
 		}
 		sc.cs[i] = c
 	}
+
+	if defaultExpiration == 0 {
+		defaultExpiration = -1
+	}
+	if cleanupInterval > 0 {
+		runShardedJanitor(sc, cleanupInterval)
+		runtime.SetFinalizer(sc, stopShardedJanitor[V])
+	}
 	return sc
+}
+
+// Add the ShardedNumericCache type that wraps shardedCache
+type ShardedNumericCache[N Number] struct {
+	*ShardedCache[N]
+}
+
+// ModifyNumeric atomically modifies a numeric item in the cache.
+// If the item does not exist or is expired, it is set to `operand`.
+// If isIncrement is true, `operand` is added to the existing value.
+// If isIncrement is false, `operand` is subtracted from the existing value.
+// It returns the new value and an error if the existing item is not of type N.
+func (sc *ShardedNumericCache[N]) ModifyNumeric(k string, operand N, isIncrement bool) (N, error) {
+	// Get the appropriate bucket for this key
+	bucket := sc.bucket(k)
+
+	// Convert the bucket to a NumericCache so we can call ModifyNumeric on it
+	nc := &NumericCache[N]{cache: bucket}
+
+	// Delegate to the bucket's ModifyNumeric implementation
+	return nc.ModifyNumeric(k, operand, isIncrement)
+}
+
+// Helper function to create a new ShardedNumericCache
+func NewShardedNumeric[N Number](shards int, defaultExpiration, cleanupInterval time.Duration) *ShardedNumericCache[N] {
+	// Create the underlying shardedCache
+	sc := NewShardedCache[N](shards, defaultExpiration, cleanupInterval)
+
+	// Create and return the ShardedNumericCache wrapper
+	result := &ShardedNumericCache[N]{ShardedCache: sc}
+
+	return result
 }
