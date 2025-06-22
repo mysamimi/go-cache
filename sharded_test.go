@@ -210,3 +210,50 @@ func BenchmarkCompareShardedVsRegularModifyNumeric(b *testing.B) {
 		}
 	})
 }
+
+func TestShardedCacheItemExpiration(t *testing.T) {
+	ts := NewShardedCache[int](2, 50*time.Millisecond, 10*time.Millisecond)
+	ts.OnEvicted(func(s string, i int) {
+		fmt.Printf("delete %s (%d)\n", s, i)
+	})
+	ts.Set("short-lived", 1, DefaultExpiration)
+	ts.Set("custom-expiry", 2, 20*time.Millisecond)
+	ts.Set("no-expiry", 3, NoExpiration)
+
+	// Wait for short-lived to expire but custom-expiry to still be alive
+	time.Sleep(300 * time.Millisecond)
+
+	// short-lived should be gone
+	_, found := ts.Get("short-lived")
+	if found == Found {
+		t.Error("short-lived item should have expired")
+	}
+
+	// custom-expiry should be gone
+	_, found = ts.Get("custom-expiry")
+	if found == Found {
+		t.Error("custom-expiry item should have expired")
+	}
+
+	// no-expiry should still be there
+	val, found := ts.Get("no-expiry")
+	if found != Found || val != 3 {
+		t.Error("no-expiry item should still exist with value 3")
+	}
+
+	// Wait for janitor to run multiple times
+	time.Sleep(50 * time.Millisecond)
+
+	// Count should be 1 (just no-expiry)
+	count := ts.ItemCount()
+	if count != 1 {
+		t.Errorf("Expected 1 item, got %d", count)
+		for i := 0; i < len(ts.Items()); i++ {
+			bi := ts.Items()[i]
+			for k, v := range bi {
+				t.Errorf("item: %s (%v)", k, v)
+
+			}
+		}
+	}
+}

@@ -337,7 +337,7 @@ func (c *cache[V]) Save(w io.Writer) (err error) {
 	enc := gob.NewEncoder(w)
 	defer func() {
 		if x := recover(); x != nil {
-			err = fmt.Errorf("Error registering item types with Gob library")
+			err = fmt.Errorf("error registering item types with Gob library")
 		}
 	}()
 	c.mu.RLock()
@@ -504,8 +504,8 @@ func newCacheWithJanitor[V any](de time.Duration, ci time.Duration, m map[string
 // manually. If the cleanup interval is less than one, expired items are not
 // deleted from the cache before calling c.DeleteExpired().
 func New[V any](defaultExpiration, cleanupInterval time.Duration) *Cache[V] {
-    items := make(map[string]Item[V])
-    return newCacheWithJanitor[V](defaultExpiration, cleanupInterval, items)
+	items := make(map[string]Item[V])
+	return newCacheWithJanitor[V](defaultExpiration, cleanupInterval, items)
 }
 
 // Return a new cache with a given default expiration duration and cleanup
@@ -530,5 +530,5 @@ func New[V any](defaultExpiration, cleanupInterval time.Duration) *Cache[V] {
 // map retrieved with c.Items(), and to register those same types before
 // decoding a blob containing an items map.
 func NewFrom[V any](defaultExpiration, cleanupInterval time.Duration, items map[string]Item[V]) *Cache[V] {
-    return newCacheWithJanitor[V](defaultExpiration, cleanupInterval, items)
+	return newCacheWithJanitor[V](defaultExpiration, cleanupInterval, items)
 }

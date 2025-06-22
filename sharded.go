@@ -86,6 +86,14 @@ func (sc *ShardedCache[V]) DeleteExpired() {
 	}
 }
 
+func (sc *ShardedCache[V]) OnEvicted(f func(string, V)) {
+	for _, v := range sc.cs {
+		v.mu.Lock()
+		v.onEvicted = f
+		v.mu.Unlock()
+	}
+}
+
 // Returns the items in the cache. This may include items that have expired,
 // but have not yet been cleaned up. If this is significant, the Expiration
 // fields of the items should be checked. Note that explicit synchronization
@@ -97,6 +105,13 @@ func (sc *ShardedCache[V]) Items() []map[string]Item[V] {
 		res[i] = v.Items()
 	}
 	return res
+}
+
+func (sc *ShardedCache[V]) ItemCount() (cnt int) {
+	for _, v := range sc.cs {
+		cnt += v.ItemCount()
+	}
+	return
 }
 
 func (sc *ShardedCache[V]) Flush() {
@@ -161,7 +176,8 @@ func NewShardedCache[V any](numShards int, defaultExpiration, cleanupInterval ti
 	}
 	if cleanupInterval > 0 {
 		runShardedJanitor(sc, cleanupInterval)
-		runtime.SetFinalizer(sc, stopShardedJanitor[V])
+		SC := &unexportedShardedCache[V]{sc}
+		runtime.SetFinalizer(SC, stopShardedJanitor[V])
 	}
 	return sc
 }
