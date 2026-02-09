@@ -1,13 +1,17 @@
 package cache
 
 import (
+	"context"
 	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type Item[V any] struct {
@@ -51,27 +55,25 @@ type cache[V any] struct {
 	mu                sync.RWMutex
 	onEvicted         func(string, V)
 	janitor           *janitor[V]
+	// Redis & Capacity
+	redisClient   *redis.Client
+	redisCh       chan redisItem[V]
+	localCapacity int
+	ctx           context.Context
+}
+
+type redisItem[V any] struct {
+	k string
+	v V
+	d time.Duration
 }
 
 // Add an item to the cache, replacing any existing item. If the duration is 0
 // (DefaultExpiration), the cache's default expiration time is used. If it is -1
 // (NoExpiration), the item never expires.
 func (c *cache[V]) Set(k string, x V, d time.Duration) {
-	// "Inlining" of set
-	var e time.Time
-	if d == DefaultExpiration {
-		d = c.defaultExpiration
-	}
-	if d > 0 {
-		e = time.Now().Add(d)
-	}
 	c.mu.Lock()
-	c.items[k] = Item[V]{
-		Object:     x,
-		Expiration: e,
-	}
-	// TODO: Calls to mu.Unlock are currently not deferred because defer
-	// adds ~200 ns (as of go1.)
+	c.set(k, x, d)
 	c.mu.Unlock()
 }
 
@@ -83,9 +85,37 @@ func (c *cache[V]) set(k string, x V, d time.Duration) {
 	if d > 0 {
 		e = time.Now().Add(d)
 	}
+
 	c.items[k] = Item[V]{
 		Object:     x,
 		Expiration: e,
+	}
+
+	c.evict()
+
+	// Async Redis Write
+	if c.redisClient != nil && c.redisCh != nil {
+		// Use non-blocking send or buffered
+		select {
+		case c.redisCh <- redisItem[V]{k: k, v: x, d: d}:
+		default:
+			// Channel full, drop write to avoid blocking app
+		}
+	}
+}
+
+// evict clears 25% of the cache if it's full.
+// This prevents thrashing (add 1, delete 1, add 1, delete 1...)
+func (c *cache[V]) evict() {
+	if c.localCapacity > 0 && len(c.items) > c.localCapacity {
+		// Target size is 75% of capacity
+		target := c.localCapacity * 3 / 4
+		for k := range c.items {
+			delete(c.items, k)
+			if len(c.items) <= target {
+				break
+			}
+		}
 	}
 }
 
@@ -131,18 +161,30 @@ func (c *cache[V]) Get(k string) (V, FoundItem) {
 	item, found := c.items[k]
 	if !found {
 		c.mu.RUnlock()
-		var zero V
-		return zero, Miss
+		return c.getFallback(k)
 	}
 	if !item.Expiration.IsZero() {
 		if time.Now().After(item.Expiration) {
 			c.mu.RUnlock()
-			var zero V
-			return zero, Expired
+			return c.getFallback(k)
 		}
 	}
 	c.mu.RUnlock()
 	return item.Object, Found
+}
+
+func (c *cache[V]) getFallback(k string) (V, FoundItem) {
+	// Try Redis
+	obj, ttl, found := c.fetchFromRedis(k)
+	if found {
+		c.mu.Lock()
+		c.setLocal(k, obj, ttl)
+		c.mu.Unlock()
+		return obj, Found
+	}
+
+	var zero V
+	return zero, Miss
 }
 
 // GetWithExpiration returns an item and its expiration time from the cache.
@@ -155,15 +197,13 @@ func (c *cache[V]) GetWithExpiration(k string) (V, time.Time, bool) {
 	item, found := c.items[k]
 	if !found {
 		c.mu.RUnlock()
-		var zero V
-		return zero, time.Time{}, false
+		return c.getFallbackWithExpiration(k)
 	}
 
 	if !item.Expiration.IsZero() {
 		if time.Now().After(item.Expiration) {
 			c.mu.RUnlock()
-			var zero V
-			return zero, time.Time{}, false
+			return c.getFallbackWithExpiration(k)
 		}
 
 		// Return the item and the expiration time
@@ -177,20 +217,93 @@ func (c *cache[V]) GetWithExpiration(k string) (V, time.Time, bool) {
 	return item.Object, time.Time{}, true
 }
 
+func (c *cache[V]) getFallbackWithExpiration(k string) (V, time.Time, bool) {
+	// Try Redis
+	obj, ttl, found := c.fetchFromRedis(k)
+	if found {
+		c.mu.Lock()
+		c.setLocal(k, obj, ttl)
+		c.mu.Unlock()
+		var exp time.Time
+		if ttl > 0 {
+			exp = time.Now().Add(ttl)
+		}
+		return obj, exp, true
+	}
+
+	var zero V
+	return zero, time.Time{}, false
+}
+
 func (c *cache[V]) get(k string) (V, bool) {
 	item, found := c.items[k]
 	if !found {
+		// Found in Redis?
+		if val, ttl, ok := c.fetchFromRedis(k); ok {
+			c.setLocal(k, val, ttl)
+			return val, true
+		}
 		var zero V
 		return zero, false
 	}
 	// "Inlining" of Expired
 	if !item.Expiration.IsZero() {
 		if time.Now().After(item.Expiration) {
+			// Check Redis if expired locally
+			if val, ttl, ok := c.fetchFromRedis(k); ok {
+				c.setLocal(k, val, ttl)
+				return val, true
+			}
 			var zero V
 			return zero, false
 		}
 	}
 	return item.Object, true
+}
+
+// Fetches from Redis without modifying local cache. Safe to call without lock.
+func (c *cache[V]) fetchFromRedis(k string) (V, time.Duration, bool) {
+	var zero V
+	if c.redisClient == nil {
+		return zero, 0, false
+	}
+
+	// Redis Get
+	val, err := c.redisClient.Get(c.ctx, k).Bytes()
+	if err != nil {
+		return zero, 0, false
+	}
+
+	// Unmarshal
+	var obj V
+	if err := json.Unmarshal(val, &obj); err != nil {
+		return zero, 0, false
+	}
+
+	// Get TTL
+	ttl, _ := c.redisClient.TTL(c.ctx, k).Result()
+	if ttl < 0 {
+		ttl = DefaultExpiration
+	}
+
+	return obj, ttl, true
+}
+
+func (c *cache[V]) setLocal(k string, x V, d time.Duration) {
+	var e time.Time
+	if d == DefaultExpiration {
+		d = c.defaultExpiration
+	}
+	if d > 0 {
+		e = time.Now().Add(d)
+	}
+
+	c.items[k] = Item[V]{
+		Object:     x,
+		Expiration: e,
+	}
+
+	c.evict()
 }
 
 // SignedInteger is a constraint for signed integer types.
@@ -506,6 +619,45 @@ func newCacheWithJanitor[V any](de time.Duration, ci time.Duration, m map[string
 func New[V any](defaultExpiration, cleanupInterval time.Duration) *Cache[V] {
 	items := make(map[string]Item[V])
 	return newCacheWithJanitor[V](defaultExpiration, cleanupInterval, items)
+}
+
+// Configures the cache to use a Redis client for L2 caching and async persistence.
+// This also starts the async worker for Redis writes.
+func (c *Cache[V]) WithRedis(cli *redis.Client) *Cache[V] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.redisClient = cli
+	if c.redisCh == nil {
+		c.redisCh = make(chan redisItem[V], 1000) // Buffer for async writes
+		c.ctx = context.Background()              // Or accept context
+		go c.redisWorker()
+	}
+	return c
+}
+
+// Configures a maximum capacity for the local in-memory cache.
+// When the limit is reached, items are evicted randomly to make space.
+func (c *Cache[V]) WithCapacity(cap int) *Cache[V] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.localCapacity = cap
+	return c
+}
+
+func (c *cache[V]) redisWorker() {
+	for item := range c.redisCh {
+		if c.redisClient != nil {
+			// Serialize/Marshal is handled by go-redis if we pass structs?
+			// go-redis handles basic types. For generic V, we might need to marshal.
+			// But go-redis Set accepts 'any'. It uses internal formatting.
+			// If V is a struct, it uses fmt.Sprint by default or implements BinaryMarshaler.
+			// It's safer to marshal to JSON explicitly to ensure we can unmarshal back.
+			data, err := json.Marshal(item.v)
+			if err == nil {
+				c.redisClient.Set(c.ctx, item.k, data, item.d)
+			}
+		}
+	}
 }
 
 // Return a new cache with a given default expiration duration and cleanup
