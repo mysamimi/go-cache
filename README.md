@@ -10,6 +10,12 @@ suitable for applications running on a single machine. Its major advantage is
 that, being essentially a thread-safe `map[string]interface{}` with expiration
 times, it doesn't need to serialize or transmit its contents over the network.
 
+**Key Features:**
+*   **Sharding**: Reduces lock contention for high-concurrency workloads.
+*   **Redis Integration**: Optional L2 caching and persistence layer (fallback on miss, async write).
+*   **Capacity Management**: Internal LRU-like eviction when memory limits are reached.
+*   **Generics**: Type-safe API (Go 1.18+).
+
 Any object can be stored, for a given duration or forever, and the cache can be
 safely used by multiple goroutines.
 
