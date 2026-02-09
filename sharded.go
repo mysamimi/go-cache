@@ -5,6 +5,8 @@ import (
 	"math"
 	"runtime"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // This is an experimental and unexported (for now) attempt at making a cache
@@ -178,6 +180,28 @@ func NewShardedCache[V any](numShards int, defaultExpiration, cleanupInterval ti
 		runShardedJanitor(sc, cleanupInterval)
 		SC := &unexportedShardedCache[V]{sc}
 		runtime.SetFinalizer(SC, stopShardedJanitor[V])
+	}
+	return sc
+}
+
+// Configures the cache to use a Redis client for L2 caching and async persistence.
+// This also starts the async worker for Redis writes.
+func (sc *ShardedCache[V]) WithRedis(cli *redis.Client) *ShardedCache[V] {
+	for _, c := range sc.cs {
+		c.withRedis(cli)
+	}
+	return sc
+}
+
+// Configures a maximum capacity for the local in-memory cache.
+// When the limit is reached, items are evicted randomly to make space.
+func (sc *ShardedCache[V]) WithCapacity(totalCap int) *ShardedCache[V] {
+	capPerShard := totalCap / sc.numBuckets
+	if capPerShard < 1 {
+		capPerShard = 1
+	}
+	for _, c := range sc.cs {
+		c.withCapacity(capPerShard)
 	}
 	return sc
 }

@@ -1,6 +1,9 @@
 I forked this project from github.com/patrickmn/go-cache and modified this
 I want to be able to increment/decriment and if not found set it in my case
 # go-cache
+![Go](https://github.com/mysamimi/go-cache/actions/workflows/test.yml/badge.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/mysamimi/go-cache/v3)](https://goreportcard.com/report/github.com/mysamimi/go-cache/v3)
+[![Go Reference](https://pkg.go.dev/badge/github.com/mysamimi/go-cache/v3.svg)](https://pkg.go.dev/github.com/mysamimi/go-cache/v3)
 
 go-cache is an in-memory key:value store/cache similar to memcached that is
 suitable for applications running on a single machine. Its major advantage is
@@ -75,6 +78,20 @@ c.WithCapacity(1000)
 **Bulk Eviction Strategy**: When the cache reaches the configured capacity, it automatically triggers a bulk eviction, removing random items until the cache size drops to **75%** of the capacity. This prevents "thrashing" (constant delete/add cycles) under heavy load.
 
 
-### Reference
+### ShardedCache
 
-`godoc` or [http://godoc.org/github.com/patrickmn/go-cache](http://godoc.org/github.com/patrickmn/go-cache)
+For high concurrency scenarios, you can use `ShardedCache` to reduce lock contention. `ShardedCache` automatically partitions keys into multiple buckets.
+
+```go
+// Create a sharded cache with 16 shards
+c := cache.NewShardedCache[string](16, 5*time.Minute, 10*time.Minute)
+
+// ShardedCache also supports Redis and Capacity configuration
+c.WithRedis(rdb)
+
+// Capacity is distributed across shards (e.g. 1000 total / 16 shards)
+c.WithCapacity(1000)
+
+c.Set("foo", "bar", 0)
+val, found := c.Get("foo")
+```

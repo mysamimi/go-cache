@@ -624,6 +624,11 @@ func New[V any](defaultExpiration, cleanupInterval time.Duration) *Cache[V] {
 // Configures the cache to use a Redis client for L2 caching and async persistence.
 // This also starts the async worker for Redis writes.
 func (c *Cache[V]) WithRedis(cli *redis.Client) *Cache[V] {
+	c.cache.withRedis(cli)
+	return c
+}
+
+func (c *cache[V]) withRedis(cli *redis.Client) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.redisClient = cli
@@ -632,16 +637,19 @@ func (c *Cache[V]) WithRedis(cli *redis.Client) *Cache[V] {
 		c.ctx = context.Background()              // Or accept context
 		go c.redisWorker()
 	}
-	return c
 }
 
 // Configures a maximum capacity for the local in-memory cache.
 // When the limit is reached, items are evicted randomly to make space.
 func (c *Cache[V]) WithCapacity(cap int) *Cache[V] {
+	c.cache.withCapacity(cap)
+	return c
+}
+
+func (c *cache[V]) withCapacity(cap int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.localCapacity = cap
-	return c
 }
 
 func (c *cache[V]) redisWorker() {
