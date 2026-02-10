@@ -5,8 +5,6 @@ import (
 	"math"
 	"runtime"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 // This is an experimental and unexported (for now) attempt at making a cache
@@ -186,7 +184,7 @@ func NewShardedCache[V any](numShards int, defaultExpiration, cleanupInterval ti
 
 // Configures the cache to use a Redis client for L2 caching and async persistence.
 // This also starts the async worker for Redis writes.
-func (sc *ShardedCache[V]) WithRedis(cli *redis.Client) *ShardedCache[V] {
+func (sc *ShardedCache[V]) WithRedis(cli RedisClient) *ShardedCache[V] {
 	for _, c := range sc.cs {
 		c.withRedis(cli)
 	}

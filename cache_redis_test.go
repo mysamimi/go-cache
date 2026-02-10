@@ -9,12 +9,29 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// RedisAdapter implements the cache.RedisClient interface using go-redis/v9
+type RedisAdapter struct {
+	client *redis.Client
+}
+
+func (r *RedisAdapter) Get(ctx context.Context, key string) ([]byte, error) {
+	return r.client.Get(ctx, key).Bytes()
+}
+
+func (r *RedisAdapter) Set(ctx context.Context, key string, value any, expiration time.Duration) error {
+	return r.client.Set(ctx, key, value, expiration).Err()
+}
+
+func (r *RedisAdapter) TTL(ctx context.Context, key string) (time.Duration, error) {
+	return r.client.TTL(ctx, key).Result()
+}
+
 type RedisTestStruct struct {
 	Name  string
 	Value int
 }
 
-func getRedisClient(t *testing.T) *redis.Client {
+func getRedisClient(t *testing.T) *RedisAdapter {
 	rdb := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
@@ -23,7 +40,7 @@ func getRedisClient(t *testing.T) *redis.Client {
 		t.Skip("Redis not available, skipping test:", err)
 	}
 	rdb.FlushDB(ctx)
-	return rdb
+	return &RedisAdapter{client: rdb}
 }
 
 func TestRedisCache_SetGet(t *testing.T) {
@@ -40,7 +57,7 @@ func TestRedisCache_SetGet(t *testing.T) {
 	time.Sleep(100 * time.Millisecond) // Wait for async write
 
 	// Verify in Redis
-	data, err := rdb.Get(ctx, key).Bytes()
+	data, err := rdb.Get(ctx, key)
 	if err != nil {
 		t.Fatalf("Expected key in Redis, got error: %v", err)
 	}

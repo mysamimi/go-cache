@@ -10,9 +10,15 @@ import (
 	"runtime"
 	"sync"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
+
+// RedisClient defines the interface for Redis operations.
+// This allows using any Redis client (e.g., go-redis v8, v9) by providing an adapter.
+type RedisClient interface {
+	Get(ctx context.Context, key string) ([]byte, error)
+	Set(ctx context.Context, key string, value any, expiration time.Duration) error
+	TTL(ctx context.Context, key string) (time.Duration, error)
+}
 
 type Item[V any] struct {
 	Object     V
@@ -56,7 +62,7 @@ type cache[V any] struct {
 	onEvicted         func(string, V)
 	janitor           *janitor[V]
 	// Redis & Capacity
-	redisClient   *redis.Client
+	redisClient   RedisClient
 	redisCh       chan redisItem[V]
 	localCapacity int
 	ctx           context.Context
@@ -269,7 +275,7 @@ func (c *cache[V]) fetchFromRedis(k string) (V, time.Duration, bool) {
 	}
 
 	// Redis Get
-	val, err := c.redisClient.Get(c.ctx, k).Bytes()
+	val, err := c.redisClient.Get(c.ctx, k)
 	if err != nil {
 		return zero, 0, false
 	}
@@ -281,7 +287,14 @@ func (c *cache[V]) fetchFromRedis(k string) (V, time.Duration, bool) {
 	}
 
 	// Get TTL
-	ttl, _ := c.redisClient.TTL(c.ctx, k).Result()
+	ttl, err := c.redisClient.TTL(c.ctx, k)
+	if err != nil {
+		// If TTL fails, maybe just use default? Or fail?
+		// go-redis returns -1 or -2 for no expiry/key not found.
+		// If key was just found, it should exist.
+		// But in interface, we expect duration.
+		ttl = DefaultExpiration
+	}
 	if ttl < 0 {
 		ttl = DefaultExpiration
 	}
@@ -621,24 +634,6 @@ func New[V any](defaultExpiration, cleanupInterval time.Duration) *Cache[V] {
 	return newCacheWithJanitor[V](defaultExpiration, cleanupInterval, items)
 }
 
-// Configures the cache to use a Redis client for L2 caching and async persistence.
-// This also starts the async worker for Redis writes.
-func (c *Cache[V]) WithRedis(cli *redis.Client) *Cache[V] {
-	c.cache.withRedis(cli)
-	return c
-}
-
-func (c *cache[V]) withRedis(cli *redis.Client) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.redisClient = cli
-	if c.redisCh == nil {
-		c.redisCh = make(chan redisItem[V], 1000) // Buffer for async writes
-		c.ctx = context.Background()              // Or accept context
-		go c.redisWorker()
-	}
-}
-
 // Configures a maximum capacity for the local in-memory cache.
 // When the limit is reached, items are evicted randomly to make space.
 func (c *Cache[V]) WithCapacity(cap int) *Cache[V] {
@@ -665,6 +660,24 @@ func (c *cache[V]) redisWorker() {
 				c.redisClient.Set(c.ctx, item.k, data, item.d)
 			}
 		}
+	}
+}
+
+// Configures the cache to use a Redis client for L2 caching and async persistence.
+// This also starts the async worker for Redis writes.
+func (c *Cache[V]) WithRedis(cli RedisClient) *Cache[V] {
+	c.cache.withRedis(cli)
+	return c
+}
+
+func (c *cache[V]) withRedis(cli RedisClient) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.redisClient = cli
+	if c.redisCh == nil {
+		c.redisCh = make(chan redisItem[V], 1000) // Buffer for async writes
+		c.ctx = context.Background()              // Or accept context
+		go c.redisWorker()
 	}
 }
 

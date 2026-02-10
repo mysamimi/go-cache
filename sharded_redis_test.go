@@ -23,7 +23,7 @@ func TestShardedCache_RedisIntegration(t *testing.T) {
 	time.Sleep(200 * time.Millisecond) // Wait for async write
 
 	// Verify in Redis
-	data, err := rdb.Get(ctx, key).Bytes()
+	data, err := rdb.Get(ctx, key)
 	if err != nil {
 		t.Fatalf("Expected key in Redis, got error: %v", err)
 	}
