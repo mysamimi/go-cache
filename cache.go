@@ -702,9 +702,9 @@ func (c *cache[V]) withCapacity(cap int) {
 	c.localCapacity = cap
 }
 
-func (c *cache[V]) redisWorker() {
+func (c *cache[V]) redisWorker(ch chan redisItem[V]) {
 	defer c.wg.Done()
-	for item := range c.redisCh {
+	for item := range ch {
 		if c.redisClient != nil {
 			switch item.op {
 			case redisOpSet:
@@ -750,7 +750,7 @@ func (c *cache[V]) withRedis(cli RedisClient) {
 		c.redisCh = make(chan redisItem[V], 1000) // Buffer for async writes
 		c.ctx = context.Background()              // Or accept context
 		c.wg.Add(1)
-		go c.redisWorker()
+		go c.redisWorker(c.redisCh)
 	}
 }
 
