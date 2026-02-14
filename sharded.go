@@ -80,6 +80,10 @@ func (sc *ShardedCache[V]) Delete(k string) {
 	sc.bucket(k).Delete(k)
 }
 
+func (sc *ShardedCache[V]) Sync(k string) (V, error) {
+	return sc.bucket(k).Sync(k)
+}
+
 func (sc *ShardedCache[V]) DeleteExpired() {
 	for _, v := range sc.cs {
 		v.DeleteExpired()
@@ -117,6 +121,13 @@ func (sc *ShardedCache[V]) ItemCount() (cnt int) {
 func (sc *ShardedCache[V]) Flush() {
 	for _, v := range sc.cs {
 		v.Flush()
+	}
+}
+
+// Close stops the background Redis workers for all shards and waits for pending operations to complete.
+func (sc *ShardedCache[V]) Close() {
+	for _, v := range sc.cs {
+		v.Close()
 	}
 }
 

@@ -257,3 +257,33 @@ func TestShardedCacheItemExpiration(t *testing.T) {
 		}
 	}
 }
+
+func TestShardedCache_OnEvicted_Capacity(t *testing.T) {
+	// Create a cache with 4 shards and total capacity of 4 (1 per shard)
+	sc := NewShardedCache[int](4, DefaultExpiration, 0)
+	sc.WithCapacity(4)
+
+	var mu sync.Mutex
+	evictedKeys := make([]string, 0)
+
+	sc.OnEvicted(func(k string, v int) {
+		mu.Lock()
+		evictedKeys = append(evictedKeys, k)
+		mu.Unlock()
+	})
+
+	// Fill the cache to trigger eviction
+	// With 4 shards and cap 4, cap per shard is 1.
+	// Add 20 items to ensure overflow across shards.
+	for i := 0; i < 20; i++ {
+		sc.Set(fmt.Sprintf("key-%d", i), i, DefaultExpiration)
+	}
+
+	mu.Lock()
+	count := len(evictedKeys)
+	mu.Unlock()
+
+	if count == 0 {
+		t.Errorf("Expected eviction callbacks to be called, got 0")
+	}
+}

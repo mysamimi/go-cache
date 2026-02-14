@@ -22,6 +22,10 @@ func (r *RedisAdapter) Set(ctx context.Context, key string, value any, expiratio
 	return r.client.Set(ctx, key, value, expiration).Err()
 }
 
+func (r *RedisAdapter) Del(ctx context.Context, key string) error {
+	return r.client.Del(ctx, key).Err()
+}
+
 func (r *RedisAdapter) TTL(ctx context.Context, key string) (time.Duration, error) {
 	return r.client.TTL(ctx, key).Result()
 }

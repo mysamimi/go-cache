@@ -17,6 +17,7 @@ import (
 type RedisClient interface {
 	Get(ctx context.Context, key string) ([]byte, error)
 	Set(ctx context.Context, key string, value any, expiration time.Duration) error
+	Del(ctx context.Context, key string) error
 	TTL(ctx context.Context, key string) (time.Duration, error)
 }
 
@@ -66,12 +67,21 @@ type cache[V any] struct {
 	redisCh       chan redisItem[V]
 	localCapacity int
 	ctx           context.Context
+	wg            sync.WaitGroup
 }
 
+type redisOp int
+
+const (
+	redisOpSet redisOp = iota
+	redisOpDel
+)
+
 type redisItem[V any] struct {
-	k string
-	v V
-	d time.Duration
+	k  string
+	v  V
+	d  time.Duration
+	op redisOp
 }
 
 // Add an item to the cache, replacing any existing item. If the duration is 0
@@ -103,7 +113,7 @@ func (c *cache[V]) set(k string, x V, d time.Duration) {
 	if c.redisClient != nil && c.redisCh != nil {
 		// Use non-blocking send or buffered
 		select {
-		case c.redisCh <- redisItem[V]{k: k, v: x, d: d}:
+		case c.redisCh <- redisItem[V]{k: k, v: x, d: d, op: redisOpSet}:
 		default:
 			// Channel full, drop write to avoid blocking app
 		}
@@ -117,6 +127,12 @@ func (c *cache[V]) evict() {
 		// Target size is 75% of capacity
 		target := c.localCapacity * 3 / 4
 		for k := range c.items {
+			// Check if we need to call OnEvicted
+			if c.onEvicted != nil {
+				if v, found := c.items[k]; found {
+					c.onEvicted(k, v.Object)
+				}
+			}
 			delete(c.items, k)
 			if len(c.items) <= target {
 				break
@@ -239,6 +255,22 @@ func (c *cache[V]) getFallbackWithExpiration(k string) (V, time.Time, bool) {
 
 	var zero V
 	return zero, time.Time{}, false
+}
+
+// Sync fetches the value for the given key from Redis (if available) and updates the local cache.
+// It returns the value and an error if the key was not found in Redis or if Redis is not configured.
+func (c *cache[V]) Sync(k string) (V, error) {
+	val, ttl, found := c.fetchFromRedis(k)
+	if !found {
+		var zero V
+		return zero, fmt.Errorf("item %s not found in Redis", k)
+	}
+
+	c.mu.Lock()
+	c.setLocal(k, val, ttl)
+	c.mu.Unlock()
+
+	return val, nil
 }
 
 func (c *cache[V]) get(k string) (V, bool) {
@@ -382,6 +414,26 @@ func (c *NumericCache[N]) ModifyNumeric(k string, operand N, isIncrement bool) (
 	item.Object = newVal
 	c.items[k] = item
 	c.mu.Unlock()
+
+	// Async Redis Write
+	if c.redisClient != nil && c.redisCh != nil {
+		// Calculate remaining TTL
+		var d time.Duration
+		if !item.Expiration.IsZero() {
+			d = time.Until(item.Expiration)
+			if d < 0 {
+				d = 1 * time.Second // Expire immediately?
+			}
+		} else {
+			d = -1 // NoExpiration
+		}
+
+		select {
+		case c.redisCh <- redisItem[N]{k: k, v: newVal, d: d, op: redisOpSet}:
+		default:
+		}
+	}
+
 	return newVal, nil
 }
 
@@ -399,21 +451,24 @@ func (c *cache[V]) delete(k string) (V, bool) {
 	if c.onEvicted != nil {
 		if v, found := c.items[k]; found {
 			delete(c.items, k)
-			// Also call onEvicted here if we are deleting an item that has an onEvicted callback
-			// However, the current logic in Delete() and DeleteExpired() calls onEvicted *after*
-			// the lock is released, based on the collected items.
-			// For consistency with that pattern, we might not call it here directly,
-			// or the calling functions (Delete, DeleteExpired) must be aware.
-			// The current `Delete` method does:
-			//   c.mu.Lock()
-			//   v, evicted := c.delete(k)
-			//   c.mu.Unlock()
-			//   if evicted { c.onEvicted(k, v) }
-			// This implies c.delete should just return the value and a flag.
+			// Redis Async Delete
+			if c.redisClient != nil && c.redisCh != nil {
+				select {
+				case c.redisCh <- redisItem[V]{k: k, op: redisOpDel}:
+				default:
+				}
+			}
 			return v.Object, true
 		}
 	}
 	delete(c.items, k)
+	// Redis Async Delete (even if onEvicted is nil)
+	if c.redisClient != nil && c.redisCh != nil {
+		select {
+		case c.redisCh <- redisItem[V]{k: k, op: redisOpDel}:
+		default:
+		}
+	}
 	var zero V
 	return zero, false
 }
@@ -648,19 +703,36 @@ func (c *cache[V]) withCapacity(cap int) {
 }
 
 func (c *cache[V]) redisWorker() {
+	defer c.wg.Done()
 	for item := range c.redisCh {
 		if c.redisClient != nil {
-			// Serialize/Marshal is handled by go-redis if we pass structs?
-			// go-redis handles basic types. For generic V, we might need to marshal.
-			// But go-redis Set accepts 'any'. It uses internal formatting.
-			// If V is a struct, it uses fmt.Sprint by default or implements BinaryMarshaler.
-			// It's safer to marshal to JSON explicitly to ensure we can unmarshal back.
-			data, err := json.Marshal(item.v)
-			if err == nil {
-				c.redisClient.Set(c.ctx, item.k, data, item.d)
+			switch item.op {
+			case redisOpSet:
+				// Serialize/Marshal is handled by go-redis if we pass structs?
+				// go-redis handles basic types. For generic V, we might need to marshal.
+				// But go-redis Set accepts 'any'. It uses internal formatting.
+				// If V is a struct, it uses fmt.Sprint by default or implements BinaryMarshaler.
+				// It's safer to marshal to JSON explicitly to ensure we can unmarshal back.
+				data, err := json.Marshal(item.v)
+				if err == nil {
+					c.redisClient.Set(c.ctx, item.k, data, item.d)
+				}
+			case redisOpDel:
+				c.redisClient.Del(c.ctx, item.k)
 			}
 		}
 	}
+}
+
+// Close stops the background Redis worker and waits for pending operations to complete.
+func (c *cache[V]) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.redisCh != nil {
+		close(c.redisCh)
+		c.redisCh = nil
+	}
+	c.wg.Wait()
 }
 
 // Configures the cache to use a Redis client for L2 caching and async persistence.
@@ -677,6 +749,7 @@ func (c *cache[V]) withRedis(cli RedisClient) {
 	if c.redisCh == nil {
 		c.redisCh = make(chan redisItem[V], 1000) // Buffer for async writes
 		c.ctx = context.Background()              // Or accept context
+		c.wg.Add(1)
 		go c.redisWorker()
 	}
 }
