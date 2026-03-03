@@ -236,6 +236,18 @@ func (sc *ShardedNumericCache[N]) ModifyNumeric(k string, operand N, isIncrement
 	return nc.ModifyNumeric(k, operand, isIncrement)
 }
 
+// Incr increments a numeric item in the cache by the specified operand.
+// This is a convenience method that calls ModifyNumeric with isIncrement=true.
+func (sc *ShardedNumericCache[N]) Incr(k string, operand N) (N, error) {
+	return sc.ModifyNumeric(k, operand, true)
+}
+
+// Decr decrements a numeric item in the cache by the specified operand.
+// This is a convenience method that calls ModifyNumeric with isIncrement=false.
+func (sc *ShardedNumericCache[N]) Decr(k string, operand N) (N, error) {
+	return sc.ModifyNumeric(k, operand, false)
+}
+
 // Helper function to create a new ShardedNumericCache
 func NewShardedNumeric[N Number](shards int, defaultExpiration, cleanupInterval time.Duration) *ShardedNumericCache[N] {
 	// Create the underlying shardedCache

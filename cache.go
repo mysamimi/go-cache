@@ -437,6 +437,18 @@ func (c *NumericCache[N]) ModifyNumeric(k string, operand N, isIncrement bool) (
 	return newVal, nil
 }
 
+// Incr increments a numeric item in the cache by the specified operand.
+// This is a convenience method that calls ModifyNumeric with isIncrement=true.
+func (c *NumericCache[N]) Incr(k string, operand N) (N, error) {
+	return c.ModifyNumeric(k, operand, true)
+}
+
+// Decr decrements a numeric item in the cache by the specified operand.
+// This is a convenience method that calls ModifyNumeric with isIncrement=false.
+func (c *NumericCache[N]) Decr(k string, operand N) (N, error) {
+	return c.ModifyNumeric(k, operand, false)
+}
+
 // Delete an item from the cache. Does nothing if the key is not in the cache.
 func (c *cache[V]) Delete(k string) {
 	c.mu.Lock()

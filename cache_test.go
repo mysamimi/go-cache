@@ -423,6 +423,67 @@ func TestModifyNumericTypeMismatch(t *testing.T) {
 	t.Log("Skipping direct type mismatch test for ModifyNumeric on NumericCache[N] as it implies cache stores N.")
 }
 
+func TestIncrDecr(t *testing.T) {
+	nc := newNumericTestCache[int](t, DefaultExpiration, 0)
+	nc.Set("val", 10, DefaultExpiration)
+
+	// Test Incr
+	newVal, err := nc.Incr("val", 5)
+	if err != nil {
+		t.Fatalf("Incr failed: %v", err)
+	}
+	if newVal != 15 {
+		t.Errorf("Expected 15 after Incr, got %d", newVal)
+	}
+
+	// Test Decr
+	newVal, err = nc.Decr("val", 3)
+	if err != nil {
+		t.Fatalf("Decr failed: %v", err)
+	}
+	if newVal != 12 {
+		t.Errorf("Expected 12 after Decr, got %d", newVal)
+	}
+}
+
+func TestIncrOverflow(t *testing.T) {
+	nc := newNumericTestCache[int8](t, DefaultExpiration, 0)
+	nc.Set("int8", int8(127), DefaultExpiration)
+
+	newVal, err := nc.Incr("int8", 1)
+	if err != nil {
+		t.Fatalf("Incr failed: %v", err)
+	}
+	if newVal != -128 {
+		t.Errorf("Expected -128 after overflow, got %d", newVal)
+	}
+}
+
+func TestDecrUnderflow(t *testing.T) {
+	nc := newNumericTestCache[uint8](t, DefaultExpiration, 0)
+	nc.Set("uint8", uint8(0), DefaultExpiration)
+
+	newVal, err := nc.Decr("uint8", 1)
+	if err != nil {
+		t.Fatalf("Decr failed: %v", err)
+	}
+	if newVal != 255 {
+		t.Errorf("Expected 255 after underflow, got %d", newVal)
+	}
+}
+
+func TestIncrWithoutSet(t *testing.T) {
+	nc := newNumericTestCache[int](t, DefaultExpiration, 0)
+
+	newVal, err := nc.Incr("newval", 5)
+	if err != nil {
+		t.Fatalf("Incr failed: %v", err)
+	}
+	if newVal != 5 {
+		t.Errorf("Expected 5 after Incr on empty key, got %d", newVal)
+	}
+}
+
 // --- End of ModifyNumeric Tests ---
 
 func TestAdd(t *testing.T) {

@@ -128,6 +128,67 @@ func TestShardedModifyNumeric(t *testing.T) {
 	}
 }
 
+func TestShardedIncrDecr(t *testing.T) {
+	snc := NewShardedNumeric[int](5, DefaultExpiration, 0)
+	snc.Set("val", 10, DefaultExpiration)
+
+	// Test Incr
+	newVal, err := snc.Incr("val", 5)
+	if err != nil {
+		t.Fatalf("Incr failed: %v", err)
+	}
+	if newVal != 15 {
+		t.Errorf("Expected 15 after Incr, got %d", newVal)
+	}
+
+	// Test Decr
+	newVal, err = snc.Decr("val", 3)
+	if err != nil {
+		t.Fatalf("Decr failed: %v", err)
+	}
+	if newVal != 12 {
+		t.Errorf("Expected 12 after Decr, got %d", newVal)
+	}
+}
+
+func TestShardedIncrOverflow(t *testing.T) {
+	snc := NewShardedNumeric[int8](5, DefaultExpiration, 0)
+	snc.Set("int8", int8(127), DefaultExpiration)
+
+	newVal, err := snc.Incr("int8", 1)
+	if err != nil {
+		t.Fatalf("Incr failed: %v", err)
+	}
+	if newVal != -128 {
+		t.Errorf("Expected -128 after overflow, got %d", newVal)
+	}
+}
+
+func TestShardedDecrUnderflow(t *testing.T) {
+	snc := NewShardedNumeric[uint8](5, DefaultExpiration, 0)
+	snc.Set("uint8", uint8(0), DefaultExpiration)
+
+	newVal, err := snc.Decr("uint8", 1)
+	if err != nil {
+		t.Fatalf("Decr failed: %v", err)
+	}
+	if newVal != 255 {
+		t.Errorf("Expected 255 after underflow, got %d", newVal)
+	}
+}
+
+func TestShardedIncrWithoutSet(t *testing.T) {
+	snc := NewShardedNumeric[int](5, DefaultExpiration, 0)
+
+	newVal, err := snc.Incr("newval", 5)
+	if err != nil {
+		t.Fatalf("Incr failed: %v", err)
+	}
+	if newVal != 5 {
+		t.Errorf("Expected 5 after Incr on empty key, got %d", newVal)
+	}
+}
+
 func BenchmarkShardedCacheGetExpiring(b *testing.B) {
 	benchmarkShardedCacheGet(b, 5*time.Minute)
 }
