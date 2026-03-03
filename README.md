@@ -126,8 +126,11 @@ nc := cache.NewShardedNumeric[int64](16, 5*time.Minute, 10*time.Minute)
 nc.WithRedis(redisv9.New(rdb))
 
 // Increment "counter" by 1
-newVal, err := nc.ModifyNumeric("counter", 1, true)
+newVal, err := nc.Incr("counter", 1)
 
 // Decrement "counter" by 5
-newVal, err = nc.ModifyNumeric("counter", 5, false)
+newVal, err = nc.Decr("counter", 5)
+
+// Underlying atomic operation:
+// newVal, err = nc.ModifyNumeric("counter", 5, false)
 ```
