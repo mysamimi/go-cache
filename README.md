@@ -13,6 +13,7 @@ go-cache is an in-memory key:value store/cache similar to memcached that is suit
 *   **Capacity Management**: Internal LRU-like eviction when memory limits are reached.
 *   **Generics**: Type-safe API (Go 1.18+).
 *   **Numeric Operations**: Atomic increment/decrement support for numeric types, persisted to Redis.
+*   **Set Cache**: Track unique members per key, each with its own TTL — ideal for counting active sessions/devices per user.
 *   **Graceful Shutdown**: Ensures pending Redis operations are completed before exit.
 *   **Sync**: Force refresh items from Redis.
 
@@ -20,48 +21,52 @@ go-cache is an in-memory key:value store/cache similar to memcached that is suit
 
 `go get github.com/mysamimi/go-cache/v3`
 
-### Usage
+---
 
-#### Basic Cache
+## Usage
+
+### Basic Cache
 
 ```go
 import (
-	"fmt"
-	"github.com/mysamimi/go-cache/v3"
-	"time"
+    "fmt"
+    "time"
+    "github.com/mysamimi/go-cache/v3"
 )
 
 func main() {
-	// Create a cache with a default expiration time of 5 minutes, and which
-	// purges expired items every 10 minutes
-	c := cache.New[string](5*time.Minute, 10*time.Minute)
+    // Create a cache with a default expiration of 5 minutes,
+    // purging expired items every 10 minutes.
+    c := cache.New[string](5*time.Minute, 10*time.Minute)
 
-	// Set the value of the key "foo" to "bar", with the default expiration time
-	c.Set("foo", "bar", cache.DefaultExpiration)
+    c.Set("foo", "bar", cache.DefaultExpiration)
 
-	// Get the string associated with the key "foo" from the cache
-	foo, found := c.Get("foo")
-	if found == cache.Found {
-		fmt.Println(foo)
-	}
+    foo, found := c.Get("foo")
+    if found == cache.Found {
+        fmt.Println(foo) // bar
+    }
 }
 ```
 
-#### Sharded Cache (Recommended for High Concurrency)
+---
+
+### Sharded Cache (Recommended for High Concurrency)
 
 `ShardedCache` automatically partitions keys into multiple buckets to reduce lock contention.
 
 ```go
-// Create a sharded cache with 16 shards
+// 16 shards, 5-min default expiry, 10-min janitor interval
 c := cache.NewShardedCache[string](16, 5*time.Minute, 10*time.Minute)
 
-c.Set("foo", "bar", 0)
+c.Set("foo", "bar", cache.DefaultExpiration)
 val, found := c.Get("foo")
 ```
 
-#### Redis Integration (L2 Cache & Persistence)
+---
 
-You can configure a Redis client to act as a Level 2 cache and persistent store. Writes (Set/Delete/ModifyNumeric) are asynchronous to Redis, while reads look up Redis if the key is missing from memory.
+### Redis Integration (L2 Cache & Persistence)
+
+Writes (Set/Delete/ModifyNumeric) are **asynchronous** to Redis. Reads fall through to Redis when a key is missing locally.
 
 Supports both `go-redis/v8` and `go-redis/v9` via adapters.
 
@@ -73,64 +78,195 @@ import (
 )
 
 func main() {
-    // 1. Initialize Redis Client
-    rdb := redis.NewClient(&redis.Options{
-        Addr: "localhost:6379",
-    })
+    rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 
-    // 2. Create Cache
     c := cache.NewShardedCache[MyStruct](16, 5*time.Minute, 10*time.Minute)
-
-    // 3. Enable Redis Integration with Adapter
     c.WithRedis(redisv9.New(rdb))
-    
-    // 4. Use Cache
-    // This will asynchronously write to Redis
-    c.Set("key", MyStruct{Val: 1}, 0)
-    
-    // 5. Graceful Shutdown
-    // Ensures all pending Redis writes are flushed before exit
-    defer c.Close()
+    defer c.Close() // flush pending Redis writes before exit
+
+    c.Set("key", MyStruct{Val: 1}, cache.DefaultExpiration)
 }
 ```
 
 #### Sync from Redis
 
-If you know an item has changed in Redis (e.g. by another service) and want to refresh the local cache immediately:
+Force-refresh a key from Redis (e.g. when another service has updated it):
 
 ```go
 val, err := c.Sync("key")
 ```
 
-#### Capacity & Aviction
+---
 
-Set a maximum number of items for the local cache. When the limit is reached, items are evicted (approx 25% of cache is cleared) to prevent thrashing.
+### Capacity & Eviction
 
 ```go
-// Limit local cache to 1000 items (distributed across shards)
+// Evict when more than 1 000 items are held (split across shards)
 c.WithCapacity(1000)
 
-// Register a callback for when items are evicted (due to expiry or capacity)
 c.OnEvicted(func(k string, v MyStruct) {
-    fmt.Printf("Item %s evicted\n", k)
+    fmt.Printf("evicted: %s\n", k)
 })
 ```
 
-#### Numeric Operations
+---
 
-For counters and numeric values, use `NumericCache` (or `ShardedNumericCache`). Operations are atomic and persisted to Redis.
+### Numeric Operations
+
+`NumericCache` / `ShardedNumericCache` provide atomic increment and decrement, persisted to Redis.
 
 ```go
-// Create a Sharded Numeric Cache for int64
 nc := cache.NewShardedNumeric[int64](16, 5*time.Minute, 10*time.Minute)
 nc.WithRedis(redisv9.New(rdb))
 
-// Increment "counter" by 1
-newVal, err := nc.Incr("counter", 1)
+newVal, err := nc.Incr("counter", 1)  // +1
+newVal, err  = nc.Decr("counter", 5)  // -5
 
-// Decrement "counter" by 5
-newVal, err = nc.Decr("counter", 5)
+// Low-level form:
+newVal, err = nc.ModifyNumeric("counter", 5, false)
+```
 
-// Underlying atomic operation:
-// newVal, err = nc.ModifyNumeric("counter", 5, false)
+---
+
+### Set Cache — Unique Member Tracking
+
+`SetCache` and `ShardedSetCache` track a **set of unique members** per key, where each member has its own TTL. This is useful for counting active sessions, devices, or viewers — anything where membership is time-bounded and keyed by a parent entity.
+
+> This pattern is the Go equivalent of the Redis `SMEMBERS` + per-key `EXISTS` cleanup pattern commonly used in Node.js.
+
+#### SetCache
+
+```go
+sc := cache.NewSetCache(5*time.Minute, 10*time.Minute)
+```
+
+##### AddMember — add or refresh a member
+
+```go
+// setKey   = the parent key (e.g. user ID)
+// member   = the unique member (e.g. device/session ID)
+// memberTTL = how long this member is considered active
+// setTTL   = TTL of the parent set key itself
+count, isNew := sc.AddMember("user:42", "device-abc", 30*time.Second, 5*time.Minute)
+// count=1, isNew=true
+
+// Re-add the same device (heartbeat / refresh)
+count, isNew = sc.AddMember("user:42", "device-abc", 30*time.Second, 5*time.Minute)
+// count=1, isNew=false  ← same member, TTL refreshed
+
+// Add a second device
+count, isNew = sc.AddMember("user:42", "device-xyz", 30*time.Second, 5*time.Minute)
+// count=2, isNew=true
+```
+
+##### CheckAndClean — enforce a concurrency limit
+
+`CheckAndClean` is the Go port of the Node.js `checkValueInListAndCleanUp` function. It:
+
+1. Checks whether the member is already active.
+2. Returns the (virtual) count immediately **without cleanup** if `count ≤ limit`.
+3. Otherwise prunes every expired member, then re-counts.
+
+> **Important:** `CheckAndClean` does **not** write the member to the set. Call `AddMember` separately once you decide to allow the session.
+
+```go
+// Example: allow at most 3 simultaneous devices per user
+
+// Suppose user:42 already has device-abc (alive) and device-old (expired).
+count, isNew := sc.CheckAndClean("user:42", "device-new", 3)
+// Projected count (2+1) = 3 ≤ limit=3 → no cleanup, fast return.
+// count=3, isNew=true
+
+// If there were 3 alive + 1 expired and we add a 4th:
+// count=5 > 3 → prune expired → count=4 → still count=4, isNew=true
+// Caller can decide to reject or allow.
+
+if count <= 3 {
+    // Allow and record the new session
+    sc.AddMember("user:42", "device-new", 30*time.Second, 5*time.Minute)
+} else {
+    fmt.Println("too many active devices")
+}
+```
+
+#### Full device-limit example
+
+```go
+func canWatch(sc *cache.SetCache, userID, deviceID string) (bool, int) {
+    const maxDevices = 3
+
+    count, isNew := sc.CheckAndClean(userID, deviceID, maxDevices)
+
+    if !isNew {
+        // Device already registered — renew its heartbeat TTL
+        sc.AddMember(userID, deviceID, 30*time.Second, 5*time.Minute)
+        return true, count
+    }
+
+    if count > maxDevices {
+        return false, count // limit exceeded even after cleanup
+    }
+
+    // New device, within limit — register it
+    sc.AddMember(userID, deviceID, 30*time.Second, 5*time.Minute)
+    return true, count
+}
+```
+
+##### Other SetCache methods
+
+```go
+// Check if a member is alive
+alive := sc.HasMember("user:42", "device-abc") // true / false
+
+// Get all live member IDs
+members := sc.Members("user:42") // []string{"device-abc", "device-xyz"}
+
+// Count without cleanup
+n := sc.Count("user:42") // 2
+
+// Prune expired members in-place and return remaining live count
+n = sc.CleanAndCount("user:42")
+
+// Remove a specific member (e.g. on explicit logout)
+sc.RemoveMember("user:42", "device-abc")
+
+// Remove all members for a key
+sc.DeleteSet("user:42")
+
+// Clear everything
+sc.Flush()
+```
+
+#### ShardedSetCache (Recommended for High Concurrency)
+
+`ShardedSetCache` wraps multiple `SetCache` shards; different set keys are handled by independent shards, eliminating cross-key lock contention.
+
+```go
+// 16 shards, 5-min parent-key TTL, 10-min janitor interval
+ssc := cache.NewShardedSetCache(16, 5*time.Minute, 10*time.Minute)
+
+// All SetCache methods are available on ShardedSetCache
+count, isNew := ssc.AddMember("user:42", "device-abc", 30*time.Second, 5*time.Minute)
+count, isNew  = ssc.CheckAndClean("user:42", "device-new", 3)
+members       := ssc.Members("user:42")
+ssc.RemoveMember("user:42", "device-abc")
+ssc.DeleteSet("user:42")
+
+// Redis backend (all shards)
+ssc.WithRedis(redisv9.New(rdb))
+defer ssc.Close()
+```
+
+#### SetCache + Redis
+
+When Redis is attached, the `setData` (the member→expiry map) is persisted as JSON. This means the set survives application restarts and is shared across instances.
+
+```go
+sc := cache.NewSetCache(5*time.Minute, 10*time.Minute)
+sc.WithRedis(redisv9.New(rdb))
+defer sc.Close()
+
+sc.AddMember("user:42", "device-abc", 30*time.Second, 5*time.Minute)
+// Writes asynchronously to Redis key "user:42"
 ```
