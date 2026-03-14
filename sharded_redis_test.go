@@ -203,3 +203,55 @@ func TestShardedCache_Sync(t *testing.T) {
 		t.Errorf("Expected new value after Sync, got %s", got)
 	}
 }
+
+func TestRedisIntegration_NumericAndSet(t *testing.T) {
+	rdb := getRedisClient(t)
+
+	t.Run("NumericCache Sync Across Instances", func(t *testing.T) {
+		key := "num_test_key"
+		worker1 := NewShardedNumeric[int](0, time.Minute, time.Minute)
+		worker1.WithRedis(rdb)
+
+		worker2 := NewShardedNumeric[int](0, time.Minute, time.Minute)
+		worker2.WithRedis(rdb)
+
+		// Worker1 increments
+		val, err := worker1.Incr(key, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if val != 5 {
+			t.Fatalf("Expected 5, got %d", val)
+		}
+
+		time.Sleep(200 * time.Millisecond) // wait for async redis write
+
+		// Worker2 increments
+		val2, err := worker2.Incr(key, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Worker2 SHOULD read 5 from Redis, add 3, and return 8.
+		if val2 != 8 {
+			t.Errorf("Worker2 failed to read from Redis. Expected 8, got %d", val2)
+		}
+	})
+
+	t.Run("SetCache Sync Across Instances", func(t *testing.T) {
+		key := "set_test_key"
+		worker1 := NewShardedSetCache(0, time.Minute, time.Minute).WithRedis(rdb)
+		worker2 := NewShardedSetCache(0, time.Minute, time.Minute).WithRedis(rdb)
+
+		_, _ = worker1.AddMember(key, "session1", time.Minute, time.Minute)
+		time.Sleep(200 * time.Millisecond) // wait for async redis write
+
+		// Worker2 adds a DIFFERENT member to the SAME set
+		worker2.AddMember(key, "session2", time.Minute, time.Minute)
+
+		// Worker2 should now see BOTH sessions
+		count := worker2.Count(key)
+		if count != 2 {
+			t.Errorf("Worker2 failed to sync Set from Redis. Expected 2 members, got %d", count)
+		}
+	})
+}

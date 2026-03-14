@@ -390,6 +390,14 @@ func (c *NumericCache[N]) ModifyNumeric(k string, operand N, isIncrement bool) (
 	c.mu.Lock()
 	item, itemFound := c.items[k]
 
+	if !itemFound || item.Expired() {
+		if val, ttl, ok := c.fetchFromRedis(k); ok {
+			c.setLocal(k, val, ttl)
+			item = c.items[k]
+			itemFound = true
+		}
+	}
+
 	// Handle cases where item is not found or is expired
 	if !itemFound || item.Expired() {
 		if itemFound && item.Expired() {

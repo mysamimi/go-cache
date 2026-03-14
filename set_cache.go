@@ -115,11 +115,8 @@ func (sc *SetCache) RemoveMember(setKey, member string) {
 
 // HasMember reports whether member is present and not expired in the set.
 func (sc *SetCache) HasMember(setKey, member string) bool {
-	sc.c.mu.RLock()
-	defer sc.c.mu.RUnlock()
-
-	sd := sc.readSet(setKey)
-	if sd == nil {
+	sd, found := sc.c.Get(setKey)
+	if found == Miss {
 		return false
 	}
 	item, ok := sd[member]
@@ -128,11 +125,8 @@ func (sc *SetCache) HasMember(setKey, member string) bool {
 
 // Members returns all non-expired member IDs for the set.
 func (sc *SetCache) Members(setKey string) []string {
-	sc.c.mu.RLock()
-	defer sc.c.mu.RUnlock()
-
-	sd := sc.readSet(setKey)
-	if sd == nil {
+	sd, found := sc.c.Get(setKey)
+	if found == Miss {
 		return nil
 	}
 	out := make([]string, 0, len(sd))
@@ -146,9 +140,11 @@ func (sc *SetCache) Members(setKey string) []string {
 
 // Count returns the number of non-expired members without modifying the set.
 func (sc *SetCache) Count(setKey string) int {
-	sc.c.mu.RLock()
-	defer sc.c.mu.RUnlock()
-	return liveCount(sc.readSet(setKey))
+	sd, found := sc.c.Get(setKey)
+	if found == Miss {
+		return 0
+	}
+	return liveCount(sd)
 }
 
 // CleanAndCount removes expired members from the set in-place and returns
@@ -260,6 +256,13 @@ func (sc *SetCache) OnEvicted(f func(string, setData)) {
 func (sc *SetCache) loadSet(key string) setData {
 	item, found := sc.c.items[key]
 	if !found || item.Expired() {
+		if val, ttl, ok := sc.c.fetchFromRedis(key); ok {
+			sc.c.setLocal(key, val, ttl)
+			item = sc.c.items[key]
+			found = true
+		}
+	}
+	if !found || item.Expired() {
 		return make(setData)
 	}
 	// Deep-copy so we don't mutate the stored value in-place before set().
@@ -270,15 +273,6 @@ func (sc *SetCache) loadSet(key string) setData {
 	return cp
 }
 
-// readSet returns the raw (not copied) setData for read-only access.
-// Caller must hold at least c.mu read-lock.
-func (sc *SetCache) readSet(key string) setData {
-	item, found := sc.c.items[key]
-	if !found || item.Expired() {
-		return nil
-	}
-	return item.Object
-}
 
 // liveCount counts non-expired entries in sd (nil-safe).
 func liveCount(sd setData) (n int) {
