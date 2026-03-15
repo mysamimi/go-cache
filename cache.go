@@ -381,6 +381,12 @@ type NumericCache[N Number] struct {
 	*cache[N]
 }
 
+// WithRedis attaches a Redis L2 layer.
+func (c *NumericCache[N]) WithRedis(cli RedisClient) *NumericCache[N] {
+	c.withRedis(cli)
+	return c
+}
+
 // ModifyNumeric atomically modifies a numeric item in the cache.
 // If the item does not exist or is expired, it is set to `operand`.
 // If isIncrement is true, `operand` is added to the existing value.

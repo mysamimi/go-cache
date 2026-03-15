@@ -385,39 +385,4 @@ func TestShardedSetCache_DeleteSet(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Benchmark
-// ---------------------------------------------------------------------------
-
-func BenchmarkSetCache_AddMember(b *testing.B) {
-	sc := NewSetCache(5*time.Minute, 0)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sc.AddMember("user:1", fmt.Sprintf("device-%d", i%50), 30*time.Second, 5*time.Minute)
-	}
-}
-
-func BenchmarkSetCache_CheckAndClean(b *testing.B) {
-	sc := NewSetCache(5*time.Minute, 0)
-	for i := 0; i < 20; i++ {
-		sc.AddMember("user:1", fmt.Sprintf("device-%d", i), 30*time.Second, 5*time.Minute)
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sc.CheckAndClean("user:1", fmt.Sprintf("device-%d", i%20), 50)
-	}
-}
-
-func BenchmarkShardedSetCache_AddMember(b *testing.B) {
-	ssc := NewShardedSetCache(16, 5*time.Minute, 0)
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		i := 0
-		for pb.Next() {
-			key := fmt.Sprintf("user:%d", i%100)
-			member := fmt.Sprintf("device-%d", i%50)
-			ssc.AddMember(key, member, 30*time.Second, 5*time.Minute)
-			i++
-		}
-	})
-}
+// (Benchmarks moved to benchmarks_test.go)

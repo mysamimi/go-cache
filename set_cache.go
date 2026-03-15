@@ -254,14 +254,12 @@ func (sc *SetCache) OnEvicted(f func(string, setData)) {
 // loadSet returns a mutable copy of the setData for key, creating one if absent/expired.
 // Caller must hold c.mu write-lock.
 func (sc *SetCache) loadSet(key string) setData {
-	item, found := sc.c.items[key]
-	if !found || item.Expired() {
-		if val, ttl, ok := sc.c.fetchFromRedis(key); ok {
-			sc.c.setLocal(key, val, ttl)
-			item = sc.c.items[key]
-			found = true
-		}
+	// Prioritize Redis fetch to ensure synchronization across instances
+	if val, ttl, ok := sc.c.fetchFromRedis(key); ok {
+		sc.c.setLocal(key, val, ttl)
 	}
+
+	item, found := sc.c.items[key]
 	if !found || item.Expired() {
 		return make(setData)
 	}
@@ -272,7 +270,6 @@ func (sc *SetCache) loadSet(key string) setData {
 	}
 	return cp
 }
-
 
 // liveCount counts non-expired entries in sd (nil-safe).
 func liveCount(sd setData) (n int) {

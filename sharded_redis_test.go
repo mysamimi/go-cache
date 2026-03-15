@@ -247,6 +247,17 @@ func TestRedisIntegration_NumericAndSet(t *testing.T) {
 
 		// Worker2 adds a DIFFERENT member to the SAME set
 		worker2.AddMember(key, "session2", time.Minute, time.Minute)
+		time.Sleep(1000 * time.Millisecond) // wait for async redis write
+
+		cnt, isNew := worker1.AddMember(key, "session1", time.Minute, time.Minute)
+		time.Sleep(1000 * time.Millisecond) // wait for async redis write
+
+		if isNew {
+			t.Errorf("Worker1 added a duplicate session. Expected false, got %v", isNew)
+		}
+		if cnt != 2 {
+			t.Errorf("Worker1 added a duplicate session. Expected 2, got %d (isNew: %v)", cnt, isNew)
+		}
 
 		// Worker2 should now see BOTH sessions
 		count := worker2.Count(key)

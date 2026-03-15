@@ -16,6 +16,7 @@ go-cache is an in-memory key:value store/cache similar to memcached that is suit
 *   **Set Cache**: Track unique members per key, each with its own TTL — ideal for counting active sessions/devices per user.
 *   **Graceful Shutdown**: Ensures pending Redis operations are completed before exit.
 *   **Sync**: Force refresh items from Redis.
+*   **Performance**: Extremely low latency local operations (see [BENCHMARKS.md](BENCHMARKS.md)).
 
 ### Installation
 
@@ -66,7 +67,7 @@ val, found := c.Get("foo")
 
 ### Redis Integration (L2 Cache & Persistence)
 
-Writes (Set/Delete/ModifyNumeric) are **asynchronous** to Redis. Reads fall through to Redis when a key is missing locally.
+Writes (Set/Delete/ModifyNumeric) are **asynchronous** to Redis. However, modification operations like `ModifyNumeric` and `AddMember` will automatically **synchronize** with Redis before updating the local cache to ensure consistency across multiple instances.
 
 Supports both `go-redis/v8` and `go-redis/v9` via adapters.
 
@@ -260,7 +261,7 @@ defer ssc.Close()
 
 #### SetCache + Redis
 
-When Redis is attached, the `setData` (the member→expiry map) is persisted as JSON. This means the set survives application restarts and is shared across instances.
+When Redis is attached, the `setData` (the member→expiry map) is persisted as JSON. Shared across instances, the set automatically **synchronizes** with Redis during modification operations (like `AddMember`), ensuring that updates from one worker are visible to others.
 
 ```go
 sc := cache.NewSetCache(5*time.Minute, 10*time.Minute)
@@ -268,5 +269,5 @@ sc.WithRedis(redisv9.New(rdb))
 defer sc.Close()
 
 sc.AddMember("user:42", "device-abc", 30*time.Second, 5*time.Minute)
-// Writes asynchronously to Redis key "user:42"
+// Fetches latest set data from Redis, merges change, then writes back asynchronously
 ```
