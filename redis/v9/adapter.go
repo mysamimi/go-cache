@@ -21,6 +21,9 @@ func (a *Adapter) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (a *Adapter) Set(ctx context.Context, key string, value any, expiration time.Duration) error {
+	if expiration < time.Millisecond {
+		expiration = time.Millisecond
+	}
 	return a.client.Set(ctx, key, value, expiration).Err()
 }
 
