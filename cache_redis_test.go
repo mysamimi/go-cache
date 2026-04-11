@@ -50,7 +50,7 @@ func getRedisClient(t *testing.T) *RedisAdapter {
 func TestRedisCache_SetGet(t *testing.T) {
 	rdb := getRedisClient(t)
 	c := New[RedisTestStruct](5*time.Minute, 10*time.Minute)
-	c.WithRedis(rdb)
+	c.WithRedis(rdb).WithRedisTimeout(1 * time.Second)
 
 	ctx := context.Background()
 	key := "test_key"
@@ -118,7 +118,7 @@ func TestBoundedCache_Eviction(t *testing.T) {
 func TestRedisCache_ExpiryFallback(t *testing.T) {
 	rdb := getRedisClient(t)
 	c := New[string](DefaultExpiration, 0)
-	c.WithRedis(rdb)
+	c.WithRedis(rdb).WithRedisTimeout(1 * time.Second)
 
 	key := "expired_local"
 

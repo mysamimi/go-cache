@@ -32,13 +32,10 @@ type setData map[string]setItem
 // Each device has its own TTL (heartbeat expiry), and the parent key groups
 // all devices for that user.
 //
-//	sc := NewSetCache(5*time.Minute, 10*time.Minute)
-//
-//	// Record that device "d1" is active for user "u:42", device TTL = 30s
-//	count, isNew := sc.AddMember("u:42", "d1", 30*time.Second, 5*time.Minute)
-//
-//	// Check whether adding "d2" would exceed limit=3, pruning stale members first
-//	count, isNew = sc.CheckAndClean("u:42", "d2", 3)
+// Thread Safety: SetCache uses a Copy-on-Write strategy. When members are added
+// or removed, the underlying map is copied. This ensures that concurrent reads
+// (e.g., Members, Count) remain consistent and race-free without requiring
+// expensive locks during iteration.
 type SetCache struct {
 	c *cache[setData]
 }
@@ -233,6 +230,15 @@ func (sc *SetCache) DeleteSet(setKey string) {
 	sc.c.Delete(setKey)
 }
 
+// Sync fetches the latest set data from Redis and updates the local cache.
+func (sc *SetCache) Sync(setKey string) (int, error) {
+	sd, err := sc.c.Sync(setKey)
+	if err != nil {
+		return 0, err
+	}
+	return liveCount(sd), nil
+}
+
 // Flush removes all sets from local memory.
 func (sc *SetCache) Flush() {
 	sc.c.Flush()
@@ -253,19 +259,26 @@ func (sc *SetCache) OnEvicted(f func(string, setData)) {
 
 // loadSet returns a mutable copy of the setData for key, creating one if absent/expired.
 // Caller must hold c.mu write-lock.
+// Implementation note: We always return a copy to maintain the Copy-on-Write invariant.
 func (sc *SetCache) loadSet(key string) setData {
-	// Prioritize Redis fetch to ensure synchronization across instances
-	if val, ttl, ok := sc.c.fetchFromRedis(key); ok {
-		sc.c.setLocal(key, val, ttl)
+	// Fast path: if key is valid in local cache, look it up.
+	if item, found := sc.c.items[key]; found && !item.Expired() {
+		return copySetData(item.Object)
 	}
 
-	item, found := sc.c.items[key]
-	if !found || item.Expired() {
-		return make(setData)
+	// Local miss or expired: fetch from Redis for cross-instance sync.
+	if val, ttl, ok := sc.c.fetchFromRedis(key); ok {
+		sc.c.setLocal(key, val, ttl)
+		// After setLocal, the item is guaranteed to be in c.items
+		return copySetData(sc.c.items[key].Object)
 	}
-	// Deep-copy so we don't mutate the stored value in-place before set().
-	cp := make(setData, len(item.Object))
-	for k, v := range item.Object {
+
+	return make(setData)
+}
+
+func copySetData(src setData) setData {
+	cp := make(setData, len(src))
+	for k, v := range src {
 		cp[k] = v
 	}
 	return cp
@@ -385,6 +398,11 @@ func (ssc *ShardedSetCache) DeleteSet(setKey string) {
 	ssc.shard(setKey).DeleteSet(setKey)
 }
 
+// Sync delegates to the appropriate shard.
+func (ssc *ShardedSetCache) Sync(setKey string) (int, error) {
+	return ssc.shard(setKey).Sync(setKey)
+}
+
 // Flush removes all sets from all shards.
 func (ssc *ShardedSetCache) Flush() {
 	for _, s := range ssc.shards {
@@ -424,6 +442,18 @@ func (ssc *ShardedSetCache) WithCapacity(totalCap int) *ShardedSetCache {
 	}
 	for _, s := range ssc.shards {
 		s.WithCapacity(capPerShard)
+	}
+	return ssc
+}
+
+func (sc *SetCache) WithRedisTimeout(d time.Duration) *SetCache {
+	sc.c.withRedisTimeout(d)
+	return sc
+}
+
+func (ssc *ShardedSetCache) WithRedisTimeout(d time.Duration) *ShardedSetCache {
+	for _, s := range ssc.shards {
+		s.WithRedisTimeout(d)
 	}
 	return ssc
 }

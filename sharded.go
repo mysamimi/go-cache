@@ -226,14 +226,8 @@ type ShardedNumericCache[N Number] struct {
 // If isIncrement is false, `operand` is subtracted from the existing value.
 // It returns the new value and an error if the existing item is not of type N.
 func (sc *ShardedNumericCache[N]) ModifyNumeric(k string, operand N, isIncrement bool) (N, error) {
-	// Get the appropriate bucket for this key
-	bucket := sc.bucket(k)
-
-	// Convert the bucket to a NumericCache so we can call ModifyNumeric on it
-	nc := &NumericCache[N]{cache: bucket}
-
-	// Delegate to the bucket's ModifyNumeric implementation
-	return nc.ModifyNumeric(k, operand, isIncrement)
+	// Delegate to the bucket's ModifyNumeric implementation via a temporary NumericCache wrapper
+	return (&NumericCache[N]{cache: sc.bucket(k)}).ModifyNumeric(k, operand, isIncrement)
 }
 
 // Incr increments a numeric item in the cache by the specified operand.
@@ -257,4 +251,16 @@ func NewShardedNumeric[N Number](shards int, defaultExpiration, cleanupInterval 
 	result := &ShardedNumericCache[N]{ShardedCache: sc}
 
 	return result
+}
+
+func (sc *ShardedCache[V]) WithRedisTimeout(d time.Duration) *ShardedCache[V] {
+	for _, c := range sc.cs {
+		c.withRedisTimeout(d)
+	}
+	return sc
+}
+
+func (sc *ShardedNumericCache[N]) WithRedisTimeout(d time.Duration) *ShardedNumericCache[N] {
+	sc.ShardedCache.WithRedisTimeout(d)
+	return sc
 }

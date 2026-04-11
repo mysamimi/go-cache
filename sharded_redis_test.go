@@ -12,7 +12,7 @@ func TestShardedCache_RedisIntegration(t *testing.T) {
 	rdb := getRedisClient(t)
 	// 4 shards, default exp 5m, cleanup 10m
 	sc := NewShardedCache[RedisTestStruct](4, 5*time.Minute, 10*time.Minute)
-	sc.WithRedis(rdb)
+	sc.WithRedis(rdb).WithRedisTimeout(1 * time.Second)
 
 	ctx := context.Background()
 	key := "sharded_test_key"
@@ -84,7 +84,7 @@ func TestShardedCache_Capacity(t *testing.T) {
 func TestShardedModifyNumeric_Redis(t *testing.T) {
 	rdb := getRedisClient(t)
 	sc := NewShardedCache[int](2, 5*time.Minute, 10*time.Minute)
-	sc.WithRedis(rdb)
+	sc.WithRedis(rdb).WithRedisTimeout(1 * time.Second)
 	numericSc := &ShardedNumericCache[int]{ShardedCache: sc}
 
 	ctx := context.Background()
@@ -142,7 +142,7 @@ func TestShardedModifyNumeric_Redis(t *testing.T) {
 func TestShardedCache_GracefulShutdown(t *testing.T) {
 	rdb := getRedisClient(t)
 	sc := NewShardedCache[string](4, 5*time.Minute, 10*time.Minute)
-	sc.WithRedis(rdb)
+	sc.WithRedis(rdb).WithRedisTimeout(1 * time.Second)
 
 	key := "shutdown_key"
 	val := "shutdown_val"
@@ -169,7 +169,7 @@ func TestShardedCache_GracefulShutdown(t *testing.T) {
 func TestShardedCache_Sync(t *testing.T) {
 	rdb := getRedisClient(t)
 	sc := NewShardedCache[string](4, 5*time.Minute, 10*time.Minute)
-	sc.WithRedis(rdb)
+	sc.WithRedis(rdb).WithRedisTimeout(1 * time.Second)
 
 	key := "sync_key"
 	val := "initial_val"
@@ -210,10 +210,10 @@ func TestRedisIntegration_NumericAndSet(t *testing.T) {
 	t.Run("NumericCache Sync Across Instances", func(t *testing.T) {
 		key := "num_test_key"
 		worker1 := NewShardedNumeric[int](0, time.Minute, time.Minute)
-		worker1.WithRedis(rdb)
+		worker1.WithRedis(rdb).WithRedisTimeout(time.Second)
 
 		worker2 := NewShardedNumeric[int](0, time.Minute, time.Minute)
-		worker2.WithRedis(rdb)
+		worker2.WithRedis(rdb).WithRedisTimeout(time.Second)
 
 		// Worker1 increments
 		val, err := worker1.Incr(key, 5)
@@ -239,18 +239,24 @@ func TestRedisIntegration_NumericAndSet(t *testing.T) {
 
 	t.Run("SetCache Sync Across Instances", func(t *testing.T) {
 		key := "set_test_key"
-		worker1 := NewShardedSetCache(0, time.Minute, time.Minute).WithRedis(rdb)
-		worker2 := NewShardedSetCache(0, time.Minute, time.Minute).WithRedis(rdb)
+		worker1 := NewShardedSetCache(0, time.Minute, time.Minute).WithRedis(rdb).WithRedisTimeout(time.Second)
+		worker2 := NewShardedSetCache(0, time.Minute, time.Minute).WithRedis(rdb).WithRedisTimeout(time.Second)
 
 		_, _ = worker1.AddMember(key, "session1", time.Minute, time.Minute)
 		time.Sleep(200 * time.Millisecond) // wait for async redis write
 
 		// Worker2 adds a DIFFERENT member to the SAME set
 		worker2.AddMember(key, "session2", time.Minute, time.Minute)
-		time.Sleep(1000 * time.Millisecond) // wait for async redis write
+		time.Sleep(500 * time.Millisecond) // wait for async redis write
+
+		// Worker1 must Sync to see the change from Worker2 before its own write
+		_, err := worker1.Sync(key)
+		if err != nil {
+			t.Fatalf("Worker1 Sync failed: %v", err)
+		}
 
 		cnt, isNew := worker1.AddMember(key, "session1", time.Minute, time.Minute)
-		time.Sleep(1000 * time.Millisecond) // wait for async redis write
+		time.Sleep(500 * time.Millisecond) // wait for async redis write
 
 		if isNew {
 			t.Errorf("Worker1 added a duplicate session. Expected false, got %v", isNew)

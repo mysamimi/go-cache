@@ -16,6 +16,7 @@ go-cache is an in-memory key:value store/cache similar to memcached that is suit
 *   **Set Cache**: Track unique members per key, each with its own TTL — ideal for counting active sessions/devices per user.
 *   **Graceful Shutdown**: Ensures pending Redis operations are completed before exit.
 *   **Sync**: Force refresh items from Redis.
+*   **Configurable Timeouts**: Fine-tune Redis L2 operation timeouts for all cache types.
 *   **Performance**: Extremely low latency local operations (see [BENCHMARKS.md](BENCHMARKS.md)).
 
 ### Installation
@@ -89,11 +90,16 @@ func main() {
 }
 ```
 
-#### Sync from Redis
+#### Redis configuration (Timeout & Sync)
 
-Force-refresh a key from Redis (e.g. when another service has updated it):
+Control how the cache interacts with Redis:
 
 ```go
+// Set a 500ms timeout for Redis operations (optional)
+c.WithRedisTimeout(500 * time.Millisecond)
+
+// Force-refresh a key from Redis (e.g. when another service has updated it)
+// Available for all cache types (Cache, NumericCache, SetCache)
 val, err := c.Sync("key")
 ```
 
@@ -263,11 +269,9 @@ defer ssc.Close()
 
 When Redis is attached, the `setData` (the member→expiry map) is persisted as JSON. Shared across instances, the set automatically **synchronizes** with Redis during modification operations (like `AddMember`), ensuring that updates from one worker are visible to others.
 
-```go
-sc := cache.NewSetCache(5*time.Minute, 10*time.Minute)
-sc.WithRedis(redisv9.New(rdb))
-defer sc.Close()
+You can also manually synchronize a set:
 
-sc.AddMember("user:42", "device-abc", 30*time.Second, 5*time.Minute)
+```go
 // Fetches latest set data from Redis, merges change, then writes back asynchronously
+count, err := sc.Sync("user:42")
 ```

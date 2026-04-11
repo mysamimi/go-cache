@@ -68,6 +68,7 @@ type cache[V any] struct {
 	localCapacity int
 	ctx           context.Context
 	wg            sync.WaitGroup
+	redisTimeout  time.Duration
 }
 
 type redisOp int
@@ -175,7 +176,7 @@ func (c *cache[V]) Replace(k string, x V, d time.Duration) error {
 	return nil
 }
 
-// Get an item from the cache. Returns the item or nil, and a founItem(Found,Miss,Expired) indicating
+// Get an item from the cache. Returns the item or the zero value of V, and a FoundItem(Found,Miss,Expired) indicating
 // whether the key was found.
 func (c *cache[V]) Get(k string) (V, FoundItem) {
 	c.mu.RLock()
@@ -210,7 +211,7 @@ func (c *cache[V]) getFallback(k string) (V, FoundItem) {
 }
 
 // GetWithExpiration returns an item and its expiration time from the cache.
-// It returns the item or nil, the expiration time if one is set (if the item
+// It returns the item or the zero value of V, the expiration time if one is set (if the item
 // never expires a zero value for time.Time is returned), and a bool indicating
 // whether the key was found.
 func (c *cache[V]) GetWithExpiration(k string) (V, time.Time, bool) {
@@ -275,26 +276,14 @@ func (c *cache[V]) Sync(k string) (V, error) {
 
 func (c *cache[V]) get(k string) (V, bool) {
 	item, found := c.items[k]
-	if !found {
-		// Found in Redis?
+	if !found || item.Expired() {
+		// Local miss or local expiry: try Redis
 		if val, ttl, ok := c.fetchFromRedis(k); ok {
 			c.setLocal(k, val, ttl)
 			return val, true
 		}
 		var zero V
 		return zero, false
-	}
-	// "Inlining" of Expired
-	if !item.Expiration.IsZero() {
-		if time.Now().After(item.Expiration) {
-			// Check Redis if expired locally
-			if val, ttl, ok := c.fetchFromRedis(k); ok {
-				c.setLocal(k, val, ttl)
-				return val, true
-			}
-			var zero V
-			return zero, false
-		}
 	}
 	return item.Object, true
 }
@@ -306,31 +295,25 @@ func (c *cache[V]) fetchFromRedis(k string) (V, time.Duration, bool) {
 		return zero, 0, false
 	}
 
-	// Redis Get
-	val, err := c.redisClient.Get(c.ctx, k)
+	ctx := c.ctx
+	var cancel context.CancelFunc
+	if c.redisTimeout > 0 {
+		ctx, cancel = context.WithTimeout(c.ctx, c.redisTimeout)
+		defer cancel()
+	}
+
+	val, err := c.redisClient.Get(ctx, k)
 	if err != nil {
 		return zero, 0, false
 	}
-
-	// Unmarshal
 	var obj V
 	if err := json.Unmarshal(val, &obj); err != nil {
 		return zero, 0, false
 	}
-
-	// Get TTL
-	ttl, err := c.redisClient.TTL(c.ctx, k)
-	if err != nil {
-		// If TTL fails, maybe just use default? Or fail?
-		// go-redis returns -1 or -2 for no expiry/key not found.
-		// If key was just found, it should exist.
-		// But in interface, we expect duration.
+	ttl, err := c.redisClient.TTL(ctx, k)
+	if err != nil || ttl < 0 {
 		ttl = DefaultExpiration
 	}
-	if ttl < 0 {
-		ttl = DefaultExpiration
-	}
-
 	return obj, ttl, true
 }
 
@@ -387,6 +370,22 @@ func (c *NumericCache[N]) WithRedis(cli RedisClient) *NumericCache[N] {
 	return c
 }
 
+func (c *Cache[V]) WithRedisTimeout(d time.Duration) *Cache[V] {
+	c.cache.withRedisTimeout(d)
+	return c
+}
+
+func (c *NumericCache[N]) WithRedisTimeout(d time.Duration) *NumericCache[N] {
+	c.cache.withRedisTimeout(d)
+	return c
+}
+
+func (c *cache[V]) withRedisTimeout(d time.Duration) {
+	c.mu.Lock()
+	c.redisTimeout = d
+	c.mu.Unlock()
+}
+
 // ModifyNumeric atomically modifies a numeric item in the cache.
 // If the item does not exist or is expired, it is set to `operand`.
 // If isIncrement is true, `operand` is added to the existing value.
@@ -435,8 +434,8 @@ func (c *NumericCache[N]) ModifyNumeric(k string, operand N, isIncrement bool) (
 		var d time.Duration
 		if !item.Expiration.IsZero() {
 			d = time.Until(item.Expiration)
-			if d < 0 {
-				d = 1 * time.Second // Expire immediately?
+			if d <= 0 {
+				d = 100 * time.Millisecond // Minimum expiration for near-expired items
 			}
 		} else {
 			d = -1 // NoExpiration
